@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MoMA Art Movement and Artist Trends</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;700&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: 'Source Sans Pro', sans-serif;
+      margin: 20px;
+    }
+    .chart-title {
+    font-family: 'Libre Franklin', sans-serif;
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 12px;
+    }
+    .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .chart {
+      width: 48%;
+    }
+    svg {
+      width: 100%;
+      height: 750px;
+    }
+    text {
+      font-size: 12px;
+    }
+    .tooltip {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      padding: 6px;
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="chart">
+      <div class="chart-title">Art Movement Distribution among Top 30 Painters</div>
+      <svg id="treemap"></svg>
+    </div>
+    <div class="chart">
+      <div class="chart-title">Artwork Count by Artist and Decade</div>
+      <svg id="stackedBarChart"></svg>
+    </div>
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    d3.csv("moma_top_30_painters_with_movement.csv").then(function(data) {
+      const tooltip = d3.select("#tooltip");
+      let selectedMovement = null;
+      let selectedArtist = null;
+
+      const movements = d3.rollup(
+        data,
+        v => v.length,
+        d => d.ArtMovement
+      );
+      const movementData = Array.from(movements, ([key, value]) => ({ name: key || "UnClassified", value }));
+
+      const width = 600, height = 650;
+      const marginBottom = 80;
+      const treemapLayout = d3.treemap().size([width, height]).padding(2);
+      const root = d3.hierarchy({ children: movementData }).sum(d => d.value);
+      treemapLayout(root);
+
+      const treemapSvg = d3.select("#treemap")
+        .attr("width", width)
+        .attr("height", height);
+
+    treemapSvg.selectAll("rect")
+        .data(root.leaves())
+        .enter().append("rect")
+        .attr("x", d => d.x0)
+        .attr("y", d => d.y0)
+        .attr("width", d => d.x1 - d.x0)
+        .attr("height", d => d.y1 - d.y0)
+        .attr("fill", "#2B9DF8")
+        .attr("class", d => `movement-block ${d.data.name.replace(/\s+/g, "_")}`)
+        .on("click", function(event, d) {
+            selectedMovement = d.data.name.replace(/\s+/g, "_");
+            selectedArtist = null;
+            d3.selectAll(".artist-bar").style("opacity", 0.2);
+            d3.selectAll(`.artist-bar[data-movement='${selectedMovement}']`).style("opacity", 1);
+            d3.selectAll(".movement-block").style("stroke", "none");
+            d3.select(this).style("stroke", "black").style("stroke-width", 2);
+            event.stopPropagation();
+        })
+        .on("mouseover", (event, d) => {
+            tooltip.style("opacity", 1)
+                .html(`${d.data.name}<br>${d.data.value} works`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 28) + "px");
+        })
+        .on("mousemove", event => {
+            tooltip.style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 28) + "px");
+        })
+        .on("mouseout", () => tooltip.style("opacity", 0));
+
+      treemapSvg.selectAll("text")
+        .data(root.leaves())
+        .enter().append("text")
+        .filter(d => d.x1 - d.x0 > 60 && d.y1 - d.y0 > 25)
+        .attr("x", d => d.x0 + 4)
+        .attr("y", d => d.y0 + 14)
+        .each(function(d) {
+  if (d.data.name === "metaphysical painting") return;  // skip label
+    const words = d.data.name.split(" ");
+    const tspans = d3.select(this).selectAll("tspan")
+        .data(words.length > 2 ? [words.slice(0, 2).join(" "), words.slice(2).join(" ")] : words)
+        .enter()
+        .append("tspan")
+        .text(t => t)
+        .attr("x", d.x0 + 4)
+        .attr("dy", (t, i) => `${i * 12}px`);
+    });
+
+
+      const artists = Array.from(d3.group(data, d => d.Artist).keys());
+      const stackData = d3.rollups(
+        data,
+        v => d3.rollup(v, g => g.length, d => d.Date ? Math.floor(+d.Date / 10) * 10 : "Unknown"),
+        d => d.Artist
+      ).map(([artist, decadeMap]) => {
+        const entry = { Artist: artist };
+        decadeMap.forEach((v, k) => entry[k] = v);
+        return entry;
+      });
+
+      const decades = Array.from(new Set(data.map(d => d.Date ? Math.floor(+d.Date / 10) * 10 : null).filter(Boolean))).sort();
+
+      const margin = { top: 20, right: 20, bottom: 180, left: 60 };
+      const barWidth = 600, barHeight = 600;
+
+      const stack = d3.stack()
+        .keys(decades)
+        .value((d, key) => d[key] || 0);
+
+      const series = stack(stackData);
+
+      const barSvg = d3.select("#stackedBarChart")
+        .attr("width", barWidth + margin.left + margin.right)
+        .attr("height", barHeight + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      const x = d3.scaleBand()
+        .domain(stackData.map(d => d.Artist))
+        .range([0, barWidth])
+        .padding(0.2);
+
+      const y = d3.scaleLinear()
+        .domain([0, d3.max(series, s => d3.max(s, d => d[1]))])
+        .nice()
+        .range([height - marginBottom, 0]);
+
+      const stackedColors = d3.scaleOrdinal()
+        .domain(decades)
+        .range(["#FF4538", "#FFBF3E", "#2B9DF8", "#00D083", "#FF5392", "#6C48E3"]);
+
+      barSvg.selectAll("g.layer")
+        .data(series)
+        .enter().append("g")
+        .attr("class", "layer")
+        .attr("fill", d => stackedColors(d.key))
+        .selectAll("rect")
+        .data(d => d)
+        .enter().append("rect")
+        .attr("x", d => x(d.data.Artist))
+        .attr("y", d => y(d[1]))
+        .attr("height", d => y(d[0]) - y(d[1]))
+        .attr("width", x.bandwidth())
+        .attr("class", d => `artist-bar ${d.data.Artist.replace(/\s+/g, "_")}`)
+        .attr("data-movement", d => {
+            const row = data.find(row => row.Artist === d.data.Artist);
+            return row ? row.ArtMovement.replace(/\s+/g, "_") : "UnClassified";
+        })
+        .on("click", function(event, d) {
+            selectedArtist = d.data.Artist.replace(/\s+/g, "_");
+            selectedMovement = d3.select(this).attr("data-movement");
+
+            d3.selectAll(".artist-bar").style("opacity", 0.2);
+            d3.selectAll(`.artist-bar.${selectedArtist}`).style("opacity", 1);
+
+            d3.selectAll(".movement-block").style("stroke", "none");
+            d3.select(`.movement-block.${selectedMovement}`).style("stroke", "black").style("stroke-width", 2);
+
+            event.stopPropagation();
+        })
+        .on("mouseover", (event, d) => {
+            const decade = decades.find(dec => d.data[dec] && d[1] - d[0] === d.data[dec]);
+            tooltip.style("opacity", 1)
+                .html(`${d.data.Artist}<br>${decade}s: ${d[1] - d[0]} works`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 28) + "px");
+        })
+        .on("mousemove", event => {
+            tooltip.style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 28) + "px");
+        })
+        .on("mouseout", () => tooltip.style("opacity", 0));
+      barSvg.append("g")
+        .attr("transform", `translate(0,${height - marginBottom})`)
+        .call(d3.axisBottom(x))
+        .selectAll("text")
+        .attr("transform", "rotate(-45)")
+        .style("text-anchor", "end")
+        .style("font-size", "10px");
+
+      barSvg.append("g")
+        .call(d3.axisLeft(y));
+        const legend = barSvg.append("g")
+        .attr("transform", `translate(0, ${barHeight + 40})`);
+
+        const itemsPerRow = Math.ceil(decades.length / 2);  // Divide into two rows
+        const legendItemWidth = 90;
+
+        decades.forEach((decade, i) => {
+        const row = Math.floor(i / itemsPerRow);
+        const col = i % itemsPerRow;
+
+        const group = legend.append("g")
+            .attr("transform", `translate(${col * legendItemWidth}, ${row * 20})`);
+
+        group.append("rect")
+            .attr("width", 12)
+            .attr("height", 12)
+            .attr("fill", stackedColors(decade));
+
+        group.append("text")
+            .attr("x", 18)
+            .attr("y", 10)
+            .style("font-size", "10px")
+            .text(`${decade}s`);
+        });
+    });
+
+    d3.select("body").on("click", function() {
+        d3.selectAll(".artist-bar").style("opacity", 1);
+        d3.selectAll(".movement-block").style("stroke", "none");
+        selectedMovement = null;
+        selectedArtist = null;
+    });
+  </script>
+</body>
+</html>
